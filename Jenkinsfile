@@ -9,7 +9,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git 'https://github.com/Ezekiel-redhat/flask-ci-cd.git'
+                git branch: 'main', url: 'https://github.com/Ezekiel-redhat/flaskci-cd.git'
             }
         }
  
