@@ -26,10 +26,14 @@ pipeline {
         }
  
         stage('Scan with Trivy') {
-            steps {
-                sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME:$IMAGE_TAG'
-            }
-        }
+    steps {
+        sh '''
+            # Fail the build if HIGH or CRITICAL vulnerabilities are found
+            trivy image --exit-code 1 --severity HIGH,CRITICAL --format table -o trivy-report.txt $IMAGE_NAME:$IMAGE_TAG
+        '''
+        archiveArtifacts artifacts: 'trivy-report.txt', fingerprint: true
+    }
+}
  
         stage('Push to Docker Registry') {
             when {
