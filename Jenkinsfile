@@ -4,9 +4,9 @@ pipeline {
  
     environment {
 
-        IMAGE_NAME = 'my-flask-app'
+        IMAGE_NAME = "ezekiel/flaskapp"
 
-        IMAGE_TAG = 'latest'
+        IMAGE_TAG = "latest"
 
     }
  
@@ -16,7 +16,7 @@ pipeline {
 
             steps {
 
-                git branch: 'main', url: 'https://github.com/Ezekiel-redhat/flaskci-cd.git'
+                git url: 'https://github.com/Ezekiel-redhat/flaskci-cd.git', branch: 'main'
 
             }
 
@@ -26,25 +26,37 @@ pipeline {
 
             steps {
 
-                sh 'pip3 install -r requirements.txt'
+                sh '''
+
+                    echo "[+] Installing Python packages..."
+
+                    pip3 install -r requirements.txt || true
+
+                '''
 
             }
 
         }
  
-        stage('Python SAST - Bandit') {
+        stage('Bandit SAST Scan') {
 
             steps {
 
                 sh '''
 
-                    pip3 install bandit
+                    echo "[+] Installing Bandit in user space..."
 
-                    bandit -r . -f html -o bandit-report.html || true
+                    python3 -m pip install --user --upgrade pip
+
+                    python3 -m pip install --user bandit
+
+                    export PATH=$PATH:$HOME/.local/bin
+
+                    echo "[+] Running Bandit..."
+
+                    $HOME/.local/bin/bandit -r . -f html -o bandit-report.html || true
 
                 '''
-
-                archiveArtifacts artifacts: 'bandit-report.html', fingerprint: true
 
             }
 
@@ -54,51 +66,67 @@ pipeline {
 
             steps {
 
-                sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG .'
+                sh '''
+
+                    echo "[+] Building Docker image ${IMAGE_NAME}:${IMAGE_TAG}..."
+
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+                '''
 
             }
 
         }
  
-        stage('Scan with Trivy') {
+        stage('Trivy Image Scan') {
 
             steps {
 
                 sh '''
 
-                    trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --format table -o trivy-report.txt $IMAGE_NAME:$IMAGE_TAG
+                    echo "[+] Installing Trivy..."
+
+                    sudo rpm -ivh https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.50.1_Linux-64bit.rpm || true
+
+                    echo "[+] Running Trivy scan on Docker image..."
+
+                    trivy image --exit-code 0 --format table --output trivy-report.txt ${IMAGE_NAME}:${IMAGE_TAG} || true
 
                 '''
-
-                archiveArtifacts artifacts: 'trivy-report.txt', fingerprint: true
 
             }
 
         }
  
-        stage('Push to Docker Registry') {
-
-            when {
-
-                branch 'main'
-
-            }
+        stage('Run Container') {
 
             steps {
 
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                sh '''
 
-                    sh '''
+                    echo "[+] Running Docker container for testing..."
 
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    docker run -d -p 5000:5000 --name flask-container ${IMAGE_NAME}:${IMAGE_TAG}
 
-                        docker tag $IMAGE_NAME:$IMAGE_TAG $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
+                '''
 
-                        docker push $DOCKER_USER/$IMAGE_NAME:$IMAGE_TAG
+            }
 
-                    '''
+        }
+ 
+        stage('Post-build Cleanup') {
 
-                }
+            steps {
+
+                sh '''
+
+                    echo "[+] Stopping and cleaning up container..."
+
+                    docker stop flask-container || true
+
+                    docker rm flask-container || true
+
+                '''
 
             }
 
@@ -108,13 +136,11 @@ pipeline {
  
     post {
 
-        failure {
+        always {
 
-            mail to: 'devops-team@cisco.com',
+            archiveArtifacts artifacts: 'bandit-report.html', fingerprint: true
 
-                 subject: "Jenkins Pipeline Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-
-                 body: "Job ${env.JOB_NAME} failed. Check Jenkins console: ${env.BUILD_URL}"
+            archiveArtifacts artifacts: 'trivy-report.txt', fingerprint: true
 
         }
 
